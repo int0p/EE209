@@ -1,0 +1,92 @@
+/*
+ * Lab5_2.c
+ * 문제2. 노래가 연주되는 동안 노래의 음 높이에 해당되는 개수만큼의 LED에 불이 켜지는 '비주얼 노래 연주기'를 제작한다.
+ 예를 들어 '도'이면 LED 1개만 불이 켜지고 '솔'이면 LED 5개에 불이 켜져야 한다.
+ */ 
+
+#include <avr/io.h>
+#include <avr/interrupt.h>
+#define  F_CPU 16000000UL
+#define __DELAY_BACKWARD_COMPATIBLE__
+
+#include <util/delay.h>
+
+//(낮은)도~(높은)도, 묵음(REST)을 정의
+#define DO 0
+#define RE 1
+#define MI 2
+#define FA 3
+#define SOL 4
+#define RA 5
+#define SI 6
+#define DDO 7
+#define REST 8
+
+#define EOS -1            // END Of Song 표시
+#define ON 0              // 버저 ON
+#define OFF 1             // 버저 OFF
+#define N2N4 1875         // 점2분 음표 연주 시간, 60*1000/96*3(ms)
+#define N2 1250           // 2분 음표 연주 시간, 60*1000/96*2(ms)
+#define N4 625            // 4분 음표 연주 시간, 60*1000/96(ms)
+#define N8N16 469         // 점8분 음표 연주 시간, 60*1000/96*2(ms)
+#define N8 313            // 8분 음표 연주 시간, 60*1000/96/2(ms)
+#define N16 156           // 16분 음표 연주 시간, 60*1000/96/4(ms)
+#define R 1               // 묵음 연주 시간, 1(ms)
+
+volatile int state, tone;
+char f_table[]={17,43,66,77,97,114,117,137,255};   // 도레미파솔라시도에 해당하는 TCNT0 값을 미리 계산한 값
+
+int song[]={SOL,REST,SOL,RA,REST,RA,SOL,REST,SOL,MI,SOL,REST,SOL,MI,REST,MI,RE,SOL,REST,SOL,RA,REST,RA,SOL,REST,SOL,MI,SOL,MI,RE,MI,DO,EOS};  // '학교종' 음계
+int time[]={N4,R,N4,N4,R,N4,N4,R,N4,N2,N4,R,N4,N4,R,N4,N2N4,N4,R,N4,N4,R,N4,N4,R,N4,N2,N4,N4,N4,N4,N2N4};  // '학교종' 박자
+	
+char LED[]={0x01,0x02,0x04,0x08,0x10,0x20,0x40,0x80,0x00};  // LED on Bits 
+															// 계의름 도~높은도, REST의 값과 LED array의 index가 1:1대응됨 
+															// ex. DO = 0 => LED[DO] = LED[0] = 0x10
+
+
+ISR(TIMER0_OVF_vect){// Timer/Counter() 오버플로우 인터럽트 서비스 루틴
+	
+	TCNT0 = f_table[tone];// TCNT0 초기화
+	
+	if(state == OFF){
+		PORTB |= 1<<4;// 버저 포트 ON
+		state = ON;
+	}
+	else{
+		PORTB &= ~(1<<4);// 버저 포트 OFF
+		state = OFF;
+	}
+}
+
+int main(void)
+{
+   int i=0;					   // 노래의 현재 음계
+   DDRA = 0xff;                // LED ON 출력
+   DDRB |= 0x10;               // 버저 연결 포트 PB4 출력 설정
+   TCCR0 = 0x03;               // 프리스케일러 32분주
+   TIMSK = 0x01;               // 오버플로우 인터럽트 활성화, TOIE0 비트 세트
+   TCNT0 = f_table[song[i]];   // TCNT0 초기화
+   sei();                      // 전역인터럽트 활성화
+   
+      
+   while (1)
+   {
+      i=0;                         // 노래 반복 초기화
+	  int j,k;					   // j: 음의 높이(LED On 갯수), k: LED 포트
+	  
+	  do{
+		  tone = song[i];          // 현재 음계(default = SOL)
+		  k=0;	
+		  for(j=0x01;j<=LED[tone];j=j*2){	// 0x10부터 지금의 음계까지 LED를 on한다. (LED[tone] : 지금의 tone에 음 높이에 하당하는 LED위치)
+			  k+=j;
+			  PORTA = k;
+		  }
+
+		  _delay_ms(time[i++]);    // 한 계명당 지속 시간
+	  }while(song[i] != EOS);      // 노래 마지막 음인지 검사
+   }
+}
+
+
+
+

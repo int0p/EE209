@@ -1,0 +1,92 @@
+/*
+ * lab6_3.c
+ * 문제3. P5511사운드 센서로 0.1초 간격으로 주변 소음을 측정하였을 때 ADC값이 5번 중 3번 이상 500을 넘는 경우, 
+			"삐" 경고음을 5초간 울려주는 '소음경보기'를 제작한다. 
+ */ 
+
+#include <avr/io.h>
+#define F_CPU 16000000UL
+#define __DELAY_BACKWARD_COMPATIBLE__
+#include <util/delay.h>
+
+
+#define MAX_LEVEL 500
+
+void init_adc(); // adc초기화.
+unsigned short read_adc(); //unsigned short는 unsigned int와 동일한 크기.
+void show_adc_led(unsigned short data); //adc의 반환값을 LED로 보여줌. 
+
+char alarm_count = 0; //경고 횟수, 최댓값 5
+void buzzer(int hz, int count); //buzzer설정.
+char LED[]={0x00,0x01,0x03,0x07,0x0f,0x1f,0xff}; //LED에 표시할 값들.
+
+int main(void)
+{
+	int i = 0; //버저 경고음 실행여부 판단 주기 => [0,5)
+	unsigned short value;
+	DDRA = 0xff;
+	DDRB |= 0x10;
+	DDRF = 0x00; //ADC 포트 입력모드.
+	
+	init_adc();
+    while (1) 
+    {
+		// ADC값을 5번 가져와 ADC가 500이상 넘은 횟수 표시. 
+		for(i=0;i<5;i++){
+			value = read_adc(); 
+			show_adc_led(value); //소리가 500을 넘으면, alarm_count 1증가, 
+								 //alarm_count만큼 LED ON, .
+			_delay_ms(100); //0.1초마다 ADC값 받아옴. 
+		}
+
+		// ADC가 500이상인 경우가 3번 이상이면 '삐'소리 5초간
+		if (alarm_count >= 3){
+			PORTA = LED[6]; //LED 모두 킴.
+			buzzer(1047,1047*5);//'도'를 5초간 출력
+		}
+		
+		alarm_count = 0;
+    }
+}
+
+void init_adc(){
+	//ADC와 관련하여 필요한 레지스터(ADMUX, ADCSRA) 초기화.
+	ADMUX = 0x41;
+	ADCSRA = 0x87;
+}
+
+unsigned short read_adc(){
+	// AD변환 후 변환된 값(ADCH, ADCL) 반환.
+	unsigned char adc_low, adc_high;
+	unsigned short value;
+	ADCSRA |= 0x40;
+	while((ADCSRA & 0x10) != 0x10)
+	;
+	adc_low = ADCL;
+	adc_high = ADCH;
+	value = (adc_high << 8) | adc_low;
+	return value;
+}
+
+void show_adc_led(unsigned short value){ 
+	// 광량을 input으로 받아, 이 값이 MAX_LEVEL보다 클 경우 LED를 키고, alarm_count증가.
+	if (value >= MAX_LEVEL) {
+		alarm_count++;
+		PORTA = LED[alarm_count];
+	}else PORTA = LED[0];
+}
+
+void buzzer(int hz, int count){ 
+	//hz의 주파수를 갖는 펄스를 count 갯수만큼 생성.
+	int i, millis, micros;
+	millis = 1000/(2*hz); //1개 펄스의 ON또는 oFF의 ms단위
+	micros = (1000.0/(2*hz)-millis)*1000; //1개 펄스의 ON또는 OFF의 us단위
+	for (i = 0; i <count;i++){
+		PORTB |= 1<<4; //buzzer ON
+		_delay_ms(millis);
+		_delay_us(micros);
+		PORTB &= ~(1<<4); //buzzer OFF
+		_delay_ms(millis);
+		_delay_us(micros);
+	}
+}

@@ -1,0 +1,108 @@
+/*
+ * Lab9_1.c
+ *
+ * 문제1. 거리센서와 LED 8개를 이용하여 다음과 같이 동작하는 '거리 표시기'를 제작한다.
+ - 1초마다 한 번씩 거리를 측정한다.
+ - 물체까지의 거리를 cm로 표시하였을 때 그 값을 10으로 나눈 만크므이 LED 개수를 ON시킨다.
+ - 만약 거리가 90cm 이상인 경우는 LED 전체를 0.5초 간격으로 깜빡이도록 한다.
+ */ 
+
+#include <avr/io.h>
+#define F_CPU 16000000UL
+#include <util/delay.h>
+#include <avr/interrupt.h>
+
+#define SOUND_VELOCITY 340UL              // 소리 속도 (m/s)
+
+#define TRIG 6                            // Trigger 신호 출력
+#define ECHO 7                            // Echo 신호 입력
+
+void init_interrupt();    // 인터럽트 초기화 함수
+int read_distance();      // 거리 측정 함수
+void LED_display();       // LED 표시 함수
+
+// 오버플로우 인터럽트 발생 횟수 초기화
+volatile int count = 0;
+
+int main(void)
+{
+	DDRA = 0xff;  // PORTA에 LED 연결
+	DDRE = 0x00;                               // PORTE를 입력 신호로 줌 (pin4:스위치 sw1)
+	DDRE = ((DDRE | (1<<TRIG))& ~(1<<ECHO));   // 초음파거리센서 TRIG(bit6, 출력), ECHO(bit7, 입력)
+	
+	init_interrupt();          // 인터럽트 초기화
+	while(1)
+	;
+}
+
+void init_interrupt(){
+	EICRB = 0x02;             // INT4 트리거 모드 : falling edge
+	EIMSK = 0x10;             // INT4 인터럽트 활성화
+	TIMSK = 0x01;             // 오버플로우 인터럽트 활성화, TOIE0 비트 세트
+	TCNT0 = 0x06;             // 1ms를 만들기 위한 타이머/카운터 레지스터 설정
+	TCCR0 = 0x04;             // 64분주 프리스케일
+	SREG |= 0x80;             // SREG의 bit7을 1로 활성화
+}
+
+ISR(TIMER0_OVF_vect)
+{
+	TCNT0 = 0x06;                   // TCNT0 초기화 (필요한 클록 사이클 값 = 250, 256-250=6)
+	count++;                        // 오버플로우 인터럽트 발생 횟수 1 증가 (64분주의 경우, 4us*250=1000us=1ms)
+	
+	static int distance;
+	distance = read_distance();     // 거리를 측정하고
+	LED_display(distance);          // LED로 표시
+	
+	if (count > 1000)               // 오버플로우 인터럽트 발생 횟수가 1000이상이면 (1ms*1000=1s)
+	{            	
+		count = 0;                  // 오버플로우 인터럽트 발생 횟수 초기화
+	}
+	
+}
+
+int read_distance()
+{
+	int distance = 0;
+	TCCR1B = 0x03;                 // Timer/Counter1 클록 4us
+	PORTE &= ~(1<<TRIG);           // Trig = Low
+	_delay_us(10);
+	PORTE |= (1<<TRIG);            // Trig = High
+	_delay_us(10);
+	PORTE &= ~(1<<TRIG);           // Trig = Low
+	while(!(PINE & (1<<ECHO)))     // Echo가 High가 될 때까지 기다림
+	;
+	TCNT1 = 0x0000;                // Timer/Counter1 값 초기화(=0)
+	while(PINE & (1<<ECHO))
+	;
+	TCCR1B = 0x00;                 // Timer/Counter1 클록 정지
+	distance = SOUND_VELOCITY*(TCNT1*4/2)/10000; // 거리 단위 cm
+	_delay_ms(1000);      // 1초 간격으로 측정
+	return(distance);
+}
+
+void LED_display(int num)  // LED 표시
+{
+	int distance_10;
+	distance_10 = num/10;  // 거리를 10으로 나눔
+	
+	// 거리를 10으로 나눈 만큼의 LED ON
+	if (distance_10 < 1) PORTA = 0x00;        
+	else if (distance_10 < 2) PORTA = 0x01;
+	else if (distance_10 < 3) PORTA = 0x03;
+	else if (distance_10 < 4) PORTA = 0x07;
+	else if (distance_10 < 5) PORTA = 0x0f;
+	else if (distance_10 < 6) PORTA = 0x1f;
+	else if (distance_10 < 7) PORTA = 0x3f;
+	else if (distance_10 < 8) PORTA = 0x7f;
+	else if (distance_10 < 9) PORTA = 0xff;
+	else  // 90cm 이상인 경우 0.5초 간격으로 LED 전체 깜박거림
+	{
+		PORTA = 0xff;
+		_delay_ms(500);
+		PORTA = 0x00;
+		_delay_ms(500);
+		PORTA = 0xff;
+		_delay_ms(500);
+		PORTA = 0x00;
+	}
+}

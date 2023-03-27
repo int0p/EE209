@@ -1,0 +1,19 @@
+/*
+ * Lab2_1.c
+ * 문제1. FND에 숫자 '0'을 디스플레이한다.
+ */ 
+
+#include <avr/io.h>
+
+
+int main(void)
+{
+    while (1)
+    {
+	    DDRC = 0xff;             // FND를 연결한 포트 C를 출력으로 설정
+	    DDRG = 0x0f;             // FND 선택 신호를 연결한 포트 G를 출력으로 설정
+	    PORTC = 0x3f;            // '0' 디스플레이 값, 0b00111111
+	    PORTG = 0x01;            // 가장 오른쪽 digit 선택 신호값, 0b00000001
+    }
+}
+

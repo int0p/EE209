@@ -1,0 +1,93 @@
+/*
+ * Lab6_1.c
+ * 문제1. 8개로 구성된 가로등(LED)에 대하여, 꺼져 있는 상태에서는 주변 광량이 10럭스 이하가 되면 가로등이 모두 켜지고, 
+           일단 켜져있는 상태에서는 주변 광량이 100럭스 이상이 되어야만 가로등이 모두 꺼지는 '지능형 가로등'을 제작한다. 
+ */ 
+
+#include <avr/io.h>
+#define F_CPU 16000000UL
+#include<util/delay.h>
+
+// 럭스에 따른 ADC 값 설정
+#define CDS_10 341    // 10럭스일 때 ADC값 
+#define CDS_20 500
+#define CDS_50 600
+#define CDS_80 700
+#define CDS_100 900   // 100럭스 일때 ADC값
+
+// state : ON / OFF
+#define OFF 0
+#define ON 1
+volatile int state = OFF;  // state 초기 상태 OFF
+
+void init_adc();
+unsigned short read_adc();      // unsigned short는 unsigned int와 동일한 크기 
+void show_adc_led(unsigned short data);
+
+
+int main(void)
+{
+    unsigned short value;
+   DDRA = 0xff;              // LED 포트 출력모드
+   DDRF = 0x00;              // ADC 포트 입력모드
+   init_adc();               // ADC 초기화
+
+   
+   while(1){
+      value = read_adc();               // AD 변환 시작 및 결과 읽어오기 함수    
+      
+      if (state == OFF){                // state가 OFF일 때
+         PORTA = 0x00;                  // LED 모두 OFF
+         if(value <= CDS_10){           // 주변 광량이 10럭스 이하면
+            state = ON;                 // state가 ON으로 변경
+            show_adc_led(value);        // 함수 정의에 따라 10럭스 이하의 경우에 해당하여 LED 모두 ON
+         }
+         else if (value >= CDS_100){    // 주변 광량이 100럭스 이상이면
+            state = OFF;                // state가 OFF로 변경
+         }
+         else{                          // 주변 광량이 10럭스 이하 되기 전까지 어떤 값이 들어와도
+            state = OFF;                // state가 OFF
+         }
+      }
+      else if (state == ON){            // state가 ON이면
+         if(value <= CDS_10){           // 주변 광량이 10럭스 이하일때
+            show_adc_led(value);        // 함수 정의에 따라 LED 동작
+            state = ON;                 // state는 ON유지
+         }
+         else if (value >= CDS_100){    // 주변 광량이 100럭스 이상 들어오면
+            state = OFF;                // state가 OFF
+         }
+         else{
+            show_adc_led(value);        // 함수 정의에 따라 LED 동작
+            state = ON;                 // state는 ON 유지
+         }
+      }
+   }
+}
+
+void init_adc(){
+   //ADC와 관련하여 필요한 레지스터(ADMUX, ADCSRA) 초기화.
+   ADMUX = 0x40;
+   ADCSRA = 0x87;
+}
+unsigned short read_adc(){
+   // AD변환 후 변환된 값(ADCH, ADCL) 반환.
+   unsigned char adc_low, adc_high;
+   unsigned short value;
+   ADCSRA |= 0x40;                         // ADC start conversion, ADSC(비트6) = 1
+   while((ADCSRA & 0x10) != 0x10)          // ADC 변환 완료 검사(ADIF) (비트4)
+   ;                                      
+   adc_low = ADCL;                         // 변환된 Low 값 읽어오기  
+   adc_high = ADCH;                        // 변환된 High 값 읽어오기 
+   value = (adc_high << 8) | adc_low;      // value는 High 및 Low로 연결, 16비트 값
+   return value;
+}
+
+void show_adc_led(unsigned short value){    // 광량을 input으로 받아, 이 값에 비례하여 LED가 켜짐.
+   if (value <= CDS_10) PORTA = 0xff;       // 광량이 10럭스
+   else if (value <= CDS_20) PORTA = 0x7f;
+   else if (value <= CDS_50) PORTA = 0x3f;
+   else if (value <= CDS_80) PORTA = 0x1f;
+   else if (value <= CDS_100) PORTA = 0x07;
+   else PORTA = 0x00;
+}

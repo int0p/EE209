@@ -1,0 +1,161 @@
+
+#include <avr/io.h>
+#define F_CPU 16000000UL
+#include <util/delay.h>
+#include <avr/interrupt.h>
+#include <ctype.h> //폰으로부터 입력받은값이 쓰레기값인지 판단하기 위함. 
+#define NULL 0
+
+//timer
+#define ON 1
+#define OFF 0
+volatile int timer = OFF;
+
+
+//buzzer
+#define ION 1
+#define IOFF 0
+volatile int buzz_inner_state = IOFF;
+
+//program mode
+#define GetTone 0
+#define Play 1
+volatile int mode = GetTone;
+int current_tcnt0 = 0;
+int toneTcnt[9] = {17,43,66,77,97,114,117,137,255};
+
+//timer interrupt
+ISR(TIMER0_OVF_vect){
+   TCNT0 = current_tcnt0;
+   
+   if(timer == ON){
+      if(buzz_inner_state == ION){
+         PORTE |= 1<<4;
+         buzz_inner_state = IOFF;
+      }
+      else{
+         PORTE &= ~(1<<4);
+         buzz_inner_state = ION;
+      }
+   }
+}
+
+void putchar1(char c)
+{
+   while(!(UCSR1A & (1<<UDRE1)))
+   ;
+   UDR1 = c;
+}
+
+char available1()
+{
+   if(UCSR1A &(1<<RXC1))
+      return(1);
+   else return(0);
+}
+
+char getchar1()
+{
+   return(UDR1);
+}
+
+char puts1(char *ptr)
+{
+	while(*ptr != NULL)
+	putchar1(*ptr++);
+}
+void init_uart1()
+{
+   UCSR1B = 0x18;
+   UCSR1C = 0x06;
+   UBRR1H = 0;
+   UBRR1L = 8;
+}
+
+
+int main(void)
+{
+    char c; //PC로부터 입력받은값 저장할 변수.
+	int toneUser[9]={'\0'};
+	int count = 0;
+
+   DDRA = 0xff;
+   DDRB = 0xf0;
+   DDRE = 0x10;
+   
+   TCCR0 = 0x03; //32분주
+   TCNT0 = 17;
+   SREG |= 0x80;
+   TIMSK = 0x01; //TIMER 인터럽트 활성화
+   
+   init_uart1();
+   puts1("Assign tone 'do' to 'high-do' with alphabet or number except r and q");
+   putchar1('\n');
+   puts1("Press r if you want to REST");
+   putchar1('\n');
+   puts1("Press q if you want to assign tone again");
+   putchar1('\n');
+   
+   
+    while (1) 
+    {
+		
+      if(!available1()) //수신된 정보가 없는경우
+      {
+         continue;
+      }
+	  
+      c = getchar1();
+	  if (!isalnum(c)){    // 쓰레기값이 들어가는것을 방지하기 위해 폰으로부터 입력받은 값이 영문 알파벳 혹은 숫자인지 검사
+		continue;
+	  }
+	  
+	  if(mode == GetTone){
+		  PORTA = 0xff;
+		  
+		  toneUser[count++] = c; //폰으로부터 입력받은값 저장.
+		  
+		   //count에 따라 다른 값 출력
+		  switch(count){
+			  case 1: puts1("do :"); putchar1(toneUser[0]);putchar1('\n');break;
+			  case 2: puts1("re :"); putchar1(toneUser[1]);putchar1('\n');break;
+			  case 3: puts1("mi :"); putchar1(toneUser[2]);putchar1('\n');break;
+			  case 4: puts1("fa :"); putchar1(toneUser[3]);putchar1('\n');break;
+			  case 5: puts1("sol :"); putchar1(toneUser[4]);putchar1('\n');break;
+			  case 6: puts1("ra :"); putchar1(toneUser[5]);putchar1('\n');break;
+			  case 7: puts1("si :"); putchar1(toneUser[6]);putchar1('\n');break;
+			  case 8: puts1("ddo :"); putchar1(toneUser[7]);putchar1('\n');mode = Play;PORTA = 0x01;count = 0;break;
+			  default: break;  
+		  }
+		  
+	  }
+	  
+	  else if (mode == Play){
+		  PORTA = 0x01;
+		  timer = ON;
+		  
+		  if(c == 'q') {
+			  timer = OFF;
+			  count = 0;
+			  mode = GetTone;
+			  int i;
+			  for(i=0;i<8;i++){
+				toneUser[i] = '\0';  
+			  }
+		  }
+		  
+		  if(c == toneUser[0]) current_tcnt0 = toneTcnt[0];
+		  else if(c == toneUser[1]) current_tcnt0 = toneTcnt[1];
+		  else if(c == toneUser[2]) current_tcnt0 = toneTcnt[2];
+		  else if(c == toneUser[3]) current_tcnt0 = toneTcnt[3];
+		  else if(c == toneUser[4]) current_tcnt0 = toneTcnt[4];
+		  else if(c == toneUser[5]) current_tcnt0 = toneTcnt[5];
+		  else if(c == toneUser[6]) current_tcnt0 = toneTcnt[6];
+		  else if(c == toneUser[7]) current_tcnt0 = toneTcnt[7];
+		  else if(c=='r') current_tcnt0 = toneTcnt[8];
+		  else continue;
+	  }
+	  
+      
+	}
+}

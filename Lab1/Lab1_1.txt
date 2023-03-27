@@ -1,0 +1,26 @@
+/*
+ * 1주차 1번째 실험
+ *
+ * 문제1. 왼쪽 LED 4개가 0.2초 간격으로 번갈아 가며 꺼졌다 켜졌다를 반복하는 '사이키 조명'을 제작한다.
+ */ 
+
+
+#include <avr/io.h>                     // 'avr/io.h'파일을 이 위치에 포함시킴
+#include <util/delay.h>                 // 딜레이 함수 _delay_ms(double ms)를 사용하기 위함
+
+#define _DELAY_BACKWARD_COMPATIBLE_     //_delay_ms()함수 인수로 정수 아닌 인수 사용하기 위해 선언
+#define F_CPU 16000000UL                // 딜레이 함수 _delay_ms(double ms)를 사용하기 위함
+
+int main(void)
+{
+	
+	DDRA = 0Xff;                //포트 A를 출력 포트로 사용
+	
+	while (1)                   //무한 루프 실행
+	{
+		PORTA = 0x0f;           // LED 왼쪽 4개 ON
+		_delay_ms(200);         // 0.2초 딜레이
+		PORTA = 0xf0;           // LED 오른쪽 4개 ON
+		_delay_ms(200);         // 0.2초 딜레이
+	}
+}

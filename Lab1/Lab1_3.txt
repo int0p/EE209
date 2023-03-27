@@ -1,0 +1,44 @@
+/*
+ * 1주차 3번째 실험
+ * 
+ * 문제3. LED로 0.1초마다 스피커 볼륨처럼 왼쪽 LED 1개 ON -> 2개 ON -> ...-> 8개 ON
+ ->7개 ON -> ... 이렇게 반복하여 수행하는 '스피커 볼륨 표시기'를 제작한다.
+ */ 
+
+#include <avr/io.h>
+#include <util/delay.h>
+
+int main(void)
+{
+	DDRA = 0xff;
+	
+	unsigned char i;  //2byte, for문 반복횟수
+	unsigned char j;   //2byte, LED 출력값
+	j=0;  //변수 초기화
+	
+	while (1)
+	{
+		/*켜진 LED 수 증가
+		알고리즘 : 2배씩 증가하늘 i값 j에 더한다.
+		결과 : j=2^0+2^1+2^2+...+2^7
+		*/
+		for(i=0x01;i<0x00;i=i*2)
+		{
+			PORTA = j;
+			j+=i;
+			_delay_ms(100);
+		}
+		
+		/* 켜진 LED 수 감소
+		알고리즘 : 2배씩 감소하늘 i값을 j에서 뺀다.
+		결과 : j=0
+		*/
+		for(i=0x00;i>=0x01;i=i/2)
+		{
+			PORTA = j;
+			j-=i;
+			_delay_ms(100);
+		}
+	}
+}
+

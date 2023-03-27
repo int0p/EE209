@@ -1,0 +1,203 @@
+/*
+ * Lab9_3.c
+ * 문제3.거리센서와 CLCD, 스위치를 이용하여 아래 표와 같이 바닥에서 천정까지의 거리는 한 번만 측정하면 되는 개선된
+ '키 측정 장치(V2.0)'을 제작한다. (두번째 스위치를 누르는 동작 이후의 스위치를 누름에 대한 기능은 두 번 째와 동일하다.
+ 즉, 이 때부터는 스위치를 누르기만 하면 머리 위에 장치가 올려져 있다고 간주하고 키를 측정한다.)
+ */ 
+
+#include <avr/io.h>
+#define F_CPU 16000000UL
+#include <util/delay.h>
+#include <avr/interrupt.h>
+
+#define SOUND_VELOCITY 340UL              // 소리 속도 (m/s)
+
+#define TRIG 6                            // Trigger 신호 출력
+#define ECHO 7                            // Echo 신호 입력
+#define INT4 4                            // 스위치 인터럽트 (bit4, 입력)
+#define STATE_0 0
+#define STATE_1 1
+#define STATE_2 2
+#define NULL 0x00
+
+unsigned char state = STATE_0;           // 초기 state를 STATE_0으로 설정
+
+// CLCD Command & Data
+#define BIT4_LINE2_DOT58 0x28             // 4bit mode, 2 lines, 5*8 Dot
+#define DISPON_CUROFF_BLKOFF 0x0C         // Display on, Cursor off, Blink off
+#define DISPOFF_CUROFF_BLKOFF 0x08        // Display off, Cursor off, Blink off
+#define INC_NOSHIFT 0x06                  // Entry mode, Cursor Increment, Display no shift
+
+#define DISPCLEAR 0x01                    // Display clear, address 0, position, cursor 0
+#define CUR1LINE 0x80                     // cursor position line 1 first
+#define CUR2LINE 0xC0                     // cursor position line 2 first
+#define CURHOME 0x02                      // cursor home
+#define E_BIT 0x04                        // Enable bit #
+#define  RW_BIT 0x03                      // Read Write bit #
+#define  RS_BIT 0x02                      // Register select bit #
+
+void CLCD_cmd(char);                  // 명령어 전송 함수
+void CLCD_data(char);                 // 데이터 write 함수
+void CLCD_puts(char *);               // 문자열 처리 함수
+void init_interrupt();                // 인터럽트 초기화 함수
+void init_CLCD();                     // CLCD 초기화 함수
+
+// 문자열 정의
+char If_On_Bottom[]="If on bottom";
+char Press_Switch[] = "Press Switch!";
+char If_On_Head[] = "If on head";
+char Your_Height[] = "Your height";
+char CLCD_NUM[] = "000.0";
+char CM[] = " cm";
+char Error[] = "Error!";
+
+int main(void){
+	DDRE = 0x00;                                    // 스위치 sw1 입력
+	DDRE = ((DDRE | (1<<TRIG))& ~(1<<ECHO));        // 초음파거리센서 TRIG(bit6, 출력), ECHO(bit7, 입력)
+	
+	DDRC = 0xff;               // CLCD PORT(data & command)
+	DDRD = 0xff;               // CLCD PORT(control 출력 : RS=bit2, RW=bit3, E=bit4)
+	
+	init_interrupt();          // 인터럽트 초기화
+	init_CLCD();               // CLCD 초기화
+	
+	CLCD_cmd(DISPCLEAR);
+	_delay_ms(2);
+	CLCD_cmd(CUR1LINE);
+	CLCD_puts(If_On_Bottom);   // Display "If on bottom" (1열)
+	CLCD_cmd(CUR2LINE);
+	CLCD_puts(Press_Switch);   // Display "Press switch!" (2열)
+	state = STATE_1;           // state를 STATE_1로 변경
+	
+	while(1)
+	;
+}
+
+void init_interrupt(){
+	EICRB = 0x02;       // INT4 트리거 모드 : falling edge
+	EIMSK = 0x10;       // INT4 인터럽트 활성화
+	SREG |= 0x80;       // SREG의 bit7을 1로 활성화
+}
+
+int read_distance(){
+	int distance = 0;
+	TCCR1B = 0x03;                 // Timer/Counter1 클록 4us
+	PORTE &= ~(1<<TRIG);           // Trig = Low
+	_delay_us(10);
+	PORTE |= (1<<TRIG);            // Trig = High
+	_delay_us(10);
+	PORTE &= ~(1<<TRIG);           // Trig = Low
+	while(!(PINE & (1<<ECHO)))     // Echo가 High가 될 때까지 기다림
+	;
+	TCNT1 = 0x0000;                // Timer/Counter1 값 초기화(=0)
+	while(PINE & (1<<ECHO))
+	;
+	TCCR1B = 0x00;                 // Timer/Counter1 클록 정지
+	distance = SOUND_VELOCITY*(TCNT1*4/2)/1000;   // 거리 = 속도*시간, 거리 단위 mm
+	
+	return(distance);
+}
+void init_CLCD(){                    // LCD 초기화
+	_delay_ms(50);                   // 전원 인가후 CLCD 셋업 시간
+	PORTC = 0x00;                    // data clear
+	CLCD_cmd(BIT4_LINE2_DOT58);      // 4bit mode, 2lines, 5*8 dot
+	CLCD_cmd(DISPON_CUROFF_BLKOFF);  // display on, cursor off, blink off
+	CLCD_cmd(INC_NOSHIFT);           // entry mode, cursor increment, display no shift
+	CLCD_cmd(DISPCLEAR);             // display clear, address 0
+	_delay_ms(2);                    // 디스플레이 클리어 실행시간 동안 대기
+}
+void CLCD_cmd(char cmd)
+{
+	PORTD = 0x00;        // 0b00000100, E(bit4)=0, R/W(bit3)=0, RS(bit2)=0, Write 사이클, 데이터 모드
+	
+	_delay_us(1);        // setup time
+	PORTD = 0x10;        // 0b00010100, E(bit4)=1, R/W(bit3)=0, RS(bit2)=0 enable
+	
+	PORTC = cmd & 0xf0;  // 8비트 데이트 중 상위 4비트 준비
+	PORTD = 0x00;        // 0b00000100, E(bit4)=0, R/W(bit3)=0, RS(bit2)=0, Write 사이클, 데이터 모드
+	
+	_delay_us(2);        // hold time & setup time
+	PORTD = 0x10;        // 0b00010100, E(bit4)=1, R/W(bit3)=0, RS(bit2)=0 enable
+	
+	PORTC = (cmd<<4) & 0xf0;  // 8비트 데이터 중 하위 4비트 준비
+	PORTD = 0x00;        // 0b00000100, E(bit4)=0, R/W(bit3)=0, RS(bit2)=0, Write 사이클, 데이터 모드
+	
+	_delay_ms(1);        // hold time & Execution time
+}
+void CLCD_data(char data)
+{
+	PORTD = 0x04;         // 0b00000100, E(bit4)=0, R/W(bit3)=0, RS(bit2)=1, Write 사이클, 데이터 모드
+	
+	_delay_us(1);         // setup time
+	PORTD = 0x14;         // 0b00010100, E(bit4)=1, R/W(bit3)=0, RS(bit2)=1 enable
+	
+	PORTC = data & 0xf0;  // 8비트 데이트 중 상위 4비트 준비
+	PORTD = 0x04;         // 0b00000100, E(bit4)=0, R/W(bit3)=0, RS(bit2)=1, Write 사이클, 데이터 모드
+	
+	_delay_us(2);         // hold time & setup time
+	PORTD = 0x14;         // 0b00010100, E(bit4)=1, R/W(bit3)=0, RS(bit2)=1 enable
+	
+	PORTC = (data<<4) & 0xf0;  // 8비트 데이터 중 하위 4비트 준비
+	PORTD = 0x04;         // 0b00000100, E(bit4)=0, R/W(bit3)=0, RS(bit2)=1, Write 사이클, 데이터 모드
+	
+	_delay_ms(1);         // hold time & Execution time
+}
+void CLCD_puts(char *ptr)
+{
+	while (*ptr != NULL)       // 문자열이 마지막(NULL)인지 검사
+	{
+		CLCD_data(*ptr++);     // 마지막이 아니면 1문자 디스플레이
+	}
+}
+void CLCD_num_display(int num){   // 측정한 값을 문자열로 나타냄
+	CLCD_NUM[0] = (num/1000)%10 + 0x30;
+	CLCD_NUM[1] = (num/100)%10 + 0x30;
+	CLCD_NUM[2] = (num/10)%10 + 0x30;
+	CLCD_NUM[3] = '.';
+	CLCD_NUM[4] = (num/1)%10 + 0x30;
+	CLCD_NUM[5] = NULL;
+	CLCD_puts(CLCD_NUM);
+}
+
+ISR(INT4_vect){          // INT4 인터럽트 발생시 (=스위치 눌렸을때)
+	static int distance_1st, distance_2nd;
+	int height;
+	
+	_delay_ms(100);                 // 스위치 바운드 시간 동안 기다림
+	EIFR = 1<<4;                    // 그 사이 스위치 바운스에 의해 생긴 인터럽트 무효화
+	if((PINE & 0x10) != 0x00)       // 스위치가 ON 상태인지 확인
+	return;                         // 아니라면 노이즈 입력으로 여기고 그냥 return
+	
+	switch(state)
+	{
+		case STATE_1:               // 스위치 1번쨰 누른 것 확인
+		CLCD_cmd(DISPCLEAR);
+		_delay_ms(2);
+		CLCD_cmd(CUR1LINE);
+		CLCD_puts(If_On_Head);      // Display "If on head" (1열)
+		CLCD_cmd(CUR2LINE);
+		CLCD_puts(Press_Switch);    // Display "Press switch!" (2열)
+		distance_1st = read_distance();   // 바닥에서 천정까지의 거리 측정
+		state = STATE_2;            // state를 STATE_2로 변경
+		break;
+		
+		case STATE_2:               // 스위치 2번째 누른 것 확인
+		CLCD_cmd(DISPCLEAR);
+		_delay_ms(2);
+		CLCD_cmd(CUR1LINE);
+		CLCD_puts(Your_Height);     // Display "Your height" (1열)
+		CLCD_cmd(CUR2LINE);
+		distance_2nd = read_distance();  // 머리 위에서 천정까지의 거리 측정
+		height = distance_1st - distance_2nd;  // 키 계산 및 표시
+		if (height < 0)
+		{
+			CLCD_puts(Error);
+		}
+		else
+		{
+			CLCD_num_display(height);
+			CLCD_puts(CM);
+		}
+		break;
+	}
+}

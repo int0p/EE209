@@ -1,0 +1,35 @@
+/*
+ * Lab2_2.c
+ * 문제2. FND에 'HELP'를 디스플레이한다.
+ */ 
+
+#include <avr/io.h>
+#define F_CPU 16000000UL            // ms단위의 딜레이 생성하기 위함
+#include <util/delay.h>             // ms단위의 딜레이 생성하기 위함
+
+
+int main(void)
+{
+	DDRC = 0xff;             // FND를 연결한 포트 C를 출력으로 설정
+	DDRG = 0x0f;             // FND 선택 신호를 연결한 포트 G를 출력으로 설정
+	
+    while (1)                // 1루프 소요시간 = 5ms*4=20ms
+    {
+		PORTC = 0x76;        // 'H' 디스플레이값
+		PORTG = 0x08;        // 가장 왼쪽 FND(Hxxx) 선택
+		_delay_ms(5);
+		
+		PORTC = 0x79;        // 'E' 디스플레이값
+		PORTG = 0x04;        // 왼쪽에서 2번째 FND(xExx) 선택
+		_delay_ms(5);
+		
+		PORTC = 0x38;        // 'L' 디스플레이값
+		PORTG = 0x02;        // 왼쪽에서 3번째 FND(xxLx) 선택
+		_delay_ms(5);
+		
+		PORTC = 0x73;        // 'P' 디스플레이값
+		PORTG = 0x01;        // 가장 오른쪽 FND(xxxP) 선택
+		_delay_ms(5);
+    }
+}
+

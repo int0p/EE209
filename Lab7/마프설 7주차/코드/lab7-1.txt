@@ -1,0 +1,50 @@
+/*
+ * Lab7_1.c
+ * 문제1. PC와 연결되었을때 PC로부터의 입력은 그대로 돌려보내지만, 'ENTER' 키가 입력되었을 때는 줄바꿈과 동시에 내가 원하는 프롬프트
+  (예를 들어 "$"가 디스플레이되는) '프롬프트 생성기'를 제작한다.
+ */ 
+
+#include <avr/io.h>
+#define F_CPU 16000000UL
+#include <util/delay.h>
+
+void init_uart0()             // UART0 초기화 함수
+{
+	UCSR0B = 0x18;            // 송신 transmit(TX) enable, 수신 recevie(RX) enable
+	UCSR0C = 0x06;            // UART mode : asynchronous operation(비동기), no parity, 1 stop bit, 8bit data
+	UBRR0H = 0;               // baudrate 세팅
+	UBRR0L = 103;             // 16MHz, 96000 baud
+}
+
+void putchar0(char c)         // 1 문자를 송신(transmit)하는 함수
+{
+	while(!(UCSR0A & (1<<UDRE0)));    // UCSR0A 5번 비트 = UDRE(UDR Empty), UDRE0는 define된 값이 5이므로 5번 비트 검사
+	UDR0 = c;                         // 1 문자 송신
+}
+
+char getchar0()               // 1 문자를 수신(receive)하는 함수
+{
+	while (!(UCSR0A & (1<<RXC0)));    // UCSR0A 7번 비트 = RXC(Receiver Complete), 1을 7번 왼쪽으로 shift한 값으로 0x80과 &한 효과가 있음
+	return(UDR0);                     // 1 문자 수신, UDR0에서 수신 데이터를 가져옴
+}
+
+int main(void)
+{
+	char value;                  // 문자를 받아오는 변수로 value를 define
+	init_uart0();                // UART0 초기화
+    while (1) 
+    {
+		value = getchar0();      // 문자 읽어옴
+		putchar0(value);         // 문자 echo back함
+		
+		if (value == '\r')       // ENTER 키가 들어왔을 때 (= 캐리지 리턴이면)
+		{
+			putchar0('\n');      // 줄바꿈 문자 추가 전송
+			putchar0('$');       // '$' 문자 추가 전송
+		}
+		else                     // 그 밖에 문자나 숫자인 경우
+		{
+			putchar0(value);     // 입력한 글자 송신
+		}	
+    }
+}

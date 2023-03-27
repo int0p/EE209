@@ -1,0 +1,85 @@
+/*
+ * lab8.c
+ *
+ * Created: 2021-11-03 오전 10:08:43
+ * Author : tmddp
+ */ 
+
+#include <avr/io.h>
+#define F_CPU 16000000UL
+#include <util/delay.h>
+
+void init_uart0()
+{
+	UCSR0B = 0x18;
+	UCSR0C = 0x06;
+	UBRR0H = 0;
+	UBRR0L = 103;
+}
+
+void putchar0(char c)
+{
+	while(!(UCSR0A & (1<<UDRE0)));
+	UDR0 = c;
+}
+
+char getchar0()
+{
+	while (!(UCSR0A & (1<<RXC0)));
+	return(UDR0);
+}
+
+
+int main(void)
+{	
+	init_uart0();
+	
+	char value,num_10,num_1;
+	int i,result;
+	
+	
+    while (1) 
+    {
+		value = getchar0();
+		putchar0(value);
+		
+		
+		if((value>48) && (value<58)){//value가 0보다 크고, 9보다 작거나 같으면
+			
+			putchar0('\n');
+			
+			for(i=1;i<10;i++){
+				
+				putchar0(value); //문자
+				
+				result = (value-'0')*i; //문자value를 숫자로 바꾸어 곱셉연산 후, 구구단 결과 저장.
+								
+				putchar0('*');
+				
+				putchar0(i+'0'); //숫자값을 ascii값으로 변환하여 출력
+				putchar0('=');
+				
+				if(result > 9) //곱셉 연산 후 그 결과가 두자릿수 이상이면, 한자리씩 추출하여 출력.
+				{
+					num_10 = (result/10)%10+'0';
+					putchar0(num_10);
+					num_1 = (result)%10+'0';
+					putchar0(num_1);
+				}
+				else
+				{
+					putchar0(result+'0');
+				}
+				
+				putchar0('\n');
+				
+			}
+		}
+		
+		else{
+			putchar0(value);
+		}
+	
+    }
+}
+

@@ -1,0 +1,60 @@
+/*
+ * Lab2_3.c
+ * 문제3. FND에 아래의 조건을 만족하도록 디스플레이한다.
+ - 내 전화번호를 1초 간격으로 오른쪽에서 왼쪽으로 물 흐르듯이 이동하며 디스플레이한다.
+ - 깜빡이도록 한다. (0.5초 디스플레이, 0.5초 OFF)
+ */ 
+
+#include <avr/io.h>
+#define F_CPU 16000000UL            // ms단위의 딜레이 생성하기 위함
+#include <util/delay.h>             // ms단위의 딜레이 생성하기 위함
+
+int main(void)
+{
+		DDRC = 0xff;             // FND를 연결한 포트 C를 출력으로 설정
+		DDRG = 0x0f;             // FND 선택 신호를 연결한 포트 G를 출력으로 설정
+	
+    int i,j; //j=시간, i= 횟수(array)
+    
+    char tel_num[20] = {0x00,0x00,0x00,0x00, //전화번호 array 010-9431-0130, 0x00=null
+						0x3f,0x06,0x3f,0x40,
+						0x67,0x66,0x4f,0x06,
+						0x40,0x3f,0x06,0x4f,
+						0x3f,0x00,0x00,0x00};
+    
+    while (1)                            // 반복적으로 디스플레이
+    {
+	    for(i=0;i<17;i++){               // 4-digit 디스플레이를 17번 실행
+		    for(j=0;j<25;j++){           // 디스플레이 시간 = 25*(5*4) =500ms(0.5초)
+				
+				// 0.5초 동안 디스플레이
+			    PORTC = tel_num[i];
+			    PORTG = 0x08;
+			    _delay_ms(5);
+			    
+			    PORTC = tel_num[i+1];
+			    PORTG = 0x04;
+			    _delay_ms(5);
+			    
+			    PORTC = tel_num[i+2];
+			    PORTG = 0x02;
+			    _delay_ms(5);
+			    
+			    PORTC = tel_num[i+3];
+			    PORTG = 0x01;
+			    _delay_ms(5);
+		    }
+		    
+		    for(j=0;j<25;j++){ 
+				
+				// 0.5초간 OFF
+			    PORTG = 0x00;
+			    _delay_ms(20);
+		    }
+	    }
+	    
+    }
+				
+    }
+}
+

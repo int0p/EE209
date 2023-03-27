@@ -1,0 +1,210 @@
+#include <avr/io.h>
+#define F_CPU 16000000UL
+#include <util/delay.h>
+#define NULL 0
+
+//CLCD command & data
+#define BIT4_LINE2_DOT58 0x28 //모드설정: 4bit 인터체이스, 2라인 디스플레이, 5*8 폰트 모드
+#define DISPON_CUROFF_BLKOFF 0x0C //디스플레이 설정: ON, 커서 OFF, blink: OFF
+#define DISPOFF_CUROFF_BLKOFF 0x08 //디스플레이 설정: OFF, 커서 OFF, blink: OFF
+#define INC_NOSHIFT 0x06 //엔트리 증가모드: 데이터를 보내면 커서 위치에 저장되고, 커서는 하나씩 오른쪽으로 증가함.
+						 //shift OFF: 데이터가 시프트 되지 않고 고정됨.
+#define DISPCLEAR 0x01 //기존 데이터 제거.
+
+#define CUR1LINE 0x80 //CLUD의 첫째줄 선택
+#define CUR2LINE 0xC0 //CLUD의 두번째줄 선택
+#define CURHOME 0x02
+#define E_BIT 0x04
+#define RW_BIT 0x03
+#define RS_BIT 0x02
+
+void CLCD_cmd(char);//CLUD 제어
+void CLCD_data(char);//CLUD data 출력
+
+
+//uart와의 통신 설정
+void init_uart0()
+{
+	UCSR0B = 0x18;
+	UCSR0C = 0x06;
+	UBRR0H = 0;
+	UBRR0L = 103;
+}
+
+char getchar0()
+{
+	while (!(UCSR0A & (1<<RXC0))); //데이터 수신이 완료될때까지 대기
+	return(UDR0);//데이터가 수신되면 해당값 return
+}
+
+void putchar0(char c)
+{
+	while(!(UCSR0A & (1<<UDRE0)));
+	
+	UDR0 = c;
+}
+
+void puts0(char *ptr){ //string을 송신하는 함수
+	while(1){
+		if(*ptr != NULL){
+			putchar0(*ptr++); //string끝이 아니면 1문자씩 송신
+		}
+		else
+		return;
+	}
+}
+
+
+int main(void){
+	_delay_ms(50);
+	DDRC = 0xff; //PORTC: CLCD 데이터 신호 할당
+	DDRD = 0xff; //PORTD: CLCD 제어 신호 할당
+	
+	_delay_ms(50);
+	//CLUD 설정
+	CLCD_cmd(BIT4_LINE2_DOT58); 
+	CLCD_cmd(DISPON_CUROFF_BLKOFF);
+	CLCD_cmd(INC_NOSHIFT);
+	
+	//CLUD 초기화
+	CLCD_cmd(DISPCLEAR);
+	_delay_ms(2); //display clear 실행 시간동안 대기
+	CLCD_cmd(CURHOME);
+	
+	init_uart0();
+	
+	char data; //통신창으로부터 받아온 입력값
+	char received[32]; //통신창으로부터 \r을 받기전까지 저장된 입력값
+	char *ptr; //배열 received를 가리키는 pointer
+	ptr = &received[0];
+	
+	char process_data = 0; //0일떈 received를 받고, 1일땐 received를 출력함.
+	int count = 0; //통신창으로부터 입력값을 받은 횟수
+
+
+	while(1){
+		
+		/////////////////////통신창으로부터 입력값을 받음. 
+		data = getchar0();
+		
+		/////////////////////입력값 검사
+		/////입력값이 tab이거나 32자를 초과하여 입력으로 받을 경우. 
+		if(data == '\t'|| count>32){
+			//입력값이 tab이면 CLCD와 received를 clear.
+			//최대 32개의 문자를 출력 할 수 있으므로 count가 32보다 크면 통신창에 너무 큰 입력이 들어왔음을 알림.
+			
+			// clear CLCD
+			CLCD_cmd(DISPCLEAR);
+			_delay_ms(2);
+			
+			CLCD_cmd(CURHOME);
+			
+			//clear received
+			int i;
+			for(i=0;i<sizeof(received);i++){
+				received[i]='\0';
+			}
+			
+			// 통신창에 각 상황에 맞는 메세지 출력.
+			putchar0('\n');
+			if(data == '\t'){
+				puts0("RESET");
+				putchar0('\n');
+			}
+			else if(count>32){
+				puts0("!!ERROR- Max Input Size is 32!!");
+			}
+			
+			// count값 초기화
+			count = 0;
+			
+		}
+		
+		/////입력값이 tab이 아니고, 32자 이하로 입력받은 경우. 
+		else{
+			if(data == '\r'){
+				//입력값이 enter면 received의 남은 값들은 null값으로.
+				
+				for(count;count<=sizeof(received);count++){
+					received[count]='\0';
+				}
+				//received내 원소들을 출력하기위해 process_data값 1으로 전환. 
+				process_data = 1;
+				count = 0;
+			}
+			else{
+				//입력값이 tab, enter가 아니고, received에 32자 미만으로 저장되어있다면, data를 received에 저장. 
+				received[count++]=data;
+			}
+			
+		}
+		
+		/////////////////////process_data 검사
+		/////process_data가 1이면 received내에 있는 원소들 CLCD와 통신창에 출력.
+		if(process_data == 1){
+			//통신창에 received에 저장된 값 출력
+			puts0(ptr);
+			
+			int i;
+			
+			//CLCD의 첫번째 줄에 received의 [0]부터 [15]까지 16자 출력. 
+			CLCD_cmd(CUR1LINE);
+			for(i=0;i<16;i++){
+				CLCD_data(received[i]);
+			}
+			
+			//CLCD의 두번째 줄에 received의 [16]부터 [31]까지 16자 출력.
+			CLCD_cmd(CUR2LINE);
+			for(i=16;i<32;i++){
+				CLCD_data(received[i]);
+			}
+			
+			//변수 초기화.
+			process_data = 0;
+			count = 0;
+			
+		}//process_data = 1
+		
+		
+	}
+}
+
+
+
+void CLCD_data(char data)
+{
+	PORTD = 0x04;
+	
+	_delay_us(1);
+	PORTD = 0x14;
+	
+	PORTC = data & 0xf0;
+	PORTD = 0x04;
+	
+	_delay_us(2);
+	PORTD = 0x14;
+	
+	PORTC = (data<<4) & 0xf0;
+	PORTD = 0x04;
+	
+	_delay_ms(1);
+}
+
+void CLCD_cmd(char cmd)
+{
+	PORTD = 0x00;
+	
+	_delay_us(1);
+	PORTD = 0x10;
+	
+	PORTC = cmd & 0xf0;
+	PORTD = 0x00;
+	
+	_delay_us(2);
+	PORTD = 0x10;
+	
+	PORTC = (cmd<<4) & 0xf0;
+	PORTD = 0x00;
+	
+	_delay_ms(1);
+}

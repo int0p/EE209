@@ -1,0 +1,141 @@
+/*
+ * Lab8_3.c
+ * 문제3. GL-5537 광센서를 이용하여 조도를 측정하고 조도값을 CLCD에 디스플레이하는 '광량 측정기'를 제작한다.
+ 단, 조도값은 실험용이므로 적당한 정도의 정확도를 가정하여 임의로 계산하여도 무방하다.
+ */ 
+
+#include <avr/io.h>
+#define F_CPU 16000000UL
+//#define __DELAY_BACKWARD_COMPATIBLE__
+#include <util/delay.h>
+#define NULL 0x00
+
+// CLCD Command & Data
+#define BIT4_LINE2_DOT58 0x28             // 4bit mode, 2 lines, 5*8 Dot
+#define DISPON_CUROFF_BLKOFF 0x0C         // Display on, Cursor off, Blink off
+#define DISPOFF_CUROFF_BLKOFF 0x08        // Display off, Cursor off, Blink off
+#define INC_NOSHIFT 0x06                  // Entry mode, Cursor Increment, Display no shift
+
+#define DISPCLEAR 0x01                    // Display clear, address 0, position, cursor 0
+#define CUR1LINE 0x80                     // cursor position line 1 first
+#define CUR2LINE 0xC0                     // cursor position line 2 first
+#define CURHOME 0x02                      // cursor home
+#define E_BIT 0x04                        // Enable bit #
+#define  RW_BIT 0x03                      // Read Write bit #
+#define  RS_BIT 0x02                      // Register select bit #
+
+void init_adc();                               // ADC 초기화
+unsigned short read_adc();                     //unsigned short는 unsigned int와 동일한 크기
+void show_adc_lcd(unsigned short data);        // ADC의 반환값을 CLCD로 보여줌
+
+void CLCD_cmd(char);              // 명령어 전송 함수
+void CLCD_data(char);             // 데이터 write 함수
+void CLCD_puts(char*);            // 문자열 처리 함수
+char LINE_1[]="Measure : ";       // CLCD 첫번째 줄에 나타낼 문자
+char LINE_2[]="0000";             // CLCD 두번째 줄에 나타낼 문자, 초기값 0000
+
+
+int main(void)
+{
+	unsigned short value;
+	DDRF = 0x00;               // ADC 포트 입력모드
+	init_adc();                // ADC 초기화
+	
+	_delay_ms(50);       // 전원 인가후 CLCD 셋업 시간
+	DDRC = 0xff;         // PORTC : CLCD 데이터 신호 할당
+	DDRD = 0xff;         // PORTD : CLCD 제어 신호 할당
+	
+	CLCD_cmd(BIT4_LINE2_DOT58);        // 4bit mode, 2 lines, 5*8 dot
+	CLCD_cmd(DISPON_CUROFF_BLKOFF);    // display on, cursor off, blink off
+	CLCD_cmd(INC_NOSHIFT);             // entry mode, cursor increment, display no shift
+	CLCD_cmd(DISPCLEAR);               // Dispaly clear, address 0, position, cursor 0
+	
+	_delay_ms(2);        // 디스플레이 클리어 실행 시간 동안 대기
+	
+	while (1)
+	{
+		CLCD_cmd(CUR1LINE);      // Cursor position line 1 first
+		CLCD_puts(LINE_1);       // CLCD 첫번째 줄에 LINE_1을 나타냄
+		
+		CLCD_cmd(CUR2LINE);      // Cursor position line 2 first
+		value = read_adc();      // ADC 값을 value에 넣어줌
+		_delay_ms(1000);         // 1초마다 ADC값 받아옴
+		show_adc_lcd(value);     // 측정값을 CLCD에 표시
+		CLCD_cmd(DISPON_CUROFF_BLKOFF);
+	}
+}
+
+void init_adc(){
+	//ADC와 관련하여 필요한 레지스터(ADMUX, ADCSRA) 초기화.
+	ADMUX = 0x41;
+	ADCSRA = 0x87;
+}
+
+unsigned short read_adc(){
+	// AD변환 후 변환된 값(ADCH, ADCL) 반환.
+	unsigned char adc_low, adc_high;
+	unsigned short value;
+	ADCSRA |= 0x40;
+	while((ADCSRA & 0x10) != 0x10)
+	;
+	adc_low = ADCL;
+	adc_high = ADCH;
+	value = (adc_high << 8) | adc_low;
+	return value;
+}
+
+void show_adc_lcd(unsigned short value)   // ADC를 LCD로 나타내는 함수
+{
+	// 숫자를 문자로 바꿔줌
+	LINE_2[0] = '0' + ((value/1000)%10);    // value 천의 자리
+	LINE_2[1] = '0' + ((value/100)%10);     // value 백의 자리
+	LINE_2[2] = '0' + ((value/10)%10);      // value 십의 자리
+	LINE_2[3] = '0' + (value%10);           // value 일의 자리
+	
+	CLCD_puts(LINE_2);   // CLCD 두 번째 줄에 LINE_2를 나타냄
+}
+
+void CLCD_puts(char *ptr)
+{
+	while (*ptr != NULL)       // 문자열이 마지막(NULL)인지 검사
+	{
+		CLCD_data(*ptr++);     // 마지막이 아니면 1문자 디스플레이
+	}
+}
+void CLCD_data(char data)
+{
+	PORTD = 0x04;         // 0b00000100, E(bit4)=0, R/W(bit3)=0, RS(bit2)=1, Write 사이클, 데이터 모드
+	
+	_delay_us(1);         // setup time
+	PORTD = 0x14;         // 0b00010100, E(bit4)=1, R/W(bit3)=0, RS(bit2)=1 enable
+	
+	PORTC = data & 0xf0;  // 8비트 데이트 중 상위 4비트 준비
+	PORTD = 0x04;         // 0b00000100, E(bit4)=0, R/W(bit3)=0, RS(bit2)=1, Write 사이클, 데이터 모드
+	
+	_delay_us(2);         // hold time & setup time
+	PORTD = 0x14;         // 0b00010100, E(bit4)=1, R/W(bit3)=0, RS(bit2)=1 enable
+	
+	PORTC = (data<<4) & 0xf0;  // 8비트 데이터 중 하위 4비트 준비
+	PORTD = 0x04;         // 0b00000100, E(bit4)=0, R/W(bit3)=0, RS(bit2)=1, Write 사이클, 데이터 모드
+	
+	_delay_ms(1);         // hold time & Execution time
+}
+
+void CLCD_cmd(char cmd)
+{
+	PORTD = 0x00;        // 0b00000100, E(bit4)=0, R/W(bit3)=0, RS(bit2)=0, Write 사이클, 데이터 모드
+	
+	_delay_us(1);        // setup time
+	PORTD = 0x10;        // 0b00010100, E(bit4)=1, R/W(bit3)=0, RS(bit2)=0 enable
+	
+	PORTC = cmd & 0xf0;  // 8비트 데이트 중 상위 4비트 준비
+	PORTD = 0x00;        // 0b00000100, E(bit4)=0, R/W(bit3)=0, RS(bit2)=0, Write 사이클, 데이터 모드
+	
+	_delay_us(2);        // hold time & setup time
+	PORTD = 0x10;        // 0b00010100, E(bit4)=1, R/W(bit3)=0, RS(bit2)=0 enable
+	
+	PORTC = (cmd<<4) & 0xf0;  // 8비트 데이터 중 하위 4비트 준비
+	PORTD = 0x00;        // 0b00000100, E(bit4)=0, R/W(bit3)=0, RS(bit2)=0, Write 사이클, 데이터 모드
+	
+	_delay_ms(1);        // hold time & Execution time
+}

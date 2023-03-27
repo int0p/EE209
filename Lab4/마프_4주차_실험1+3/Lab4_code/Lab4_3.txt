@@ -1,0 +1,146 @@
+/*
+ * BUZZER_3.c
+ * 문제3. 3개의 노래가 저장되어 있고, 이것이 스위치를 누를 때마다 새로운 노래로 바뀌어 연주되는 '노래방 반주기'를 제작한다.
+ */ 
+
+#include <avr/io.h>
+#include <avr/interrupt.h>
+#define  F_CPU 16000000UL
+#define __DELAY_BACKWARD_COMPATIBLE__
+
+#include <util/delay.h>
+
+//state
+#define ON 0              // 버저 ON
+#define OFF 1             // 버저 OFF
+
+//song
+#define SONG1 1        // 첫번째 노래 : 비행기
+#define SONG2 2        // 두번째 노래 : 학교종
+#define SONG3 3        // 세번째 노래 : 무엇이 똑같을까
+
+//(낮은)도~(높은)도, 묵음(REST)을 정의
+#define DO 0
+#define RE 1
+#define MI 2
+#define FA 3
+#define SOL 4
+#define RA 5
+#define SI 6
+#define DDO 7
+#define REST 8
+#define EOS -1            // END Of Song 표시
+
+#define N2N4 1875         // 점2분 음표 연주 시간, 60*1000/96*3(ms)
+#define N2 1250           // 2분 음표 연주 시간, 60*1000/96*2(ms)
+#define N4 625            // 4분 음표 연주 시간, 60*1000/96(ms)
+#define N8N16 469         // 점8분 음표 연주 시간, 60*1000/96*2(ms)
+#define N8 313            // 8분 음표 연주 시간, 60*1000/96/2(ms)
+#define N16 156           // 16분 음표 연주 시간, 60*1000/96/4(ms)
+#define R 1               // 묵음 연주 시간, 1(ms)
+
+
+volatile int tone = 0;
+volatile int state;             // ON, OFF
+volatile int cur_song = SONG1;  // SONG1, SONG2, SONG3
+
+char f_table[]={17,43,66,77,97,114,117,137,255};   // 도레미파솔라시도에 해당하는 TCNT0 값을 미리 계산한 값
+
+
+int song_1[]={MI,RE,DO,RE,MI,REST,MI,REST,MI,RE,REST,RE,REST,RE,MI,REST,MI,REST,MI,REST,MI,RE,DO,RE,MI,REST,MI,REST,MI,RE,REST,RE,MI,RE,DO,EOS};  // '비행기' 음계
+int time_1[]={N8N16,N16,N8,N8,N8,R,N8,R,N4,N8,R,N8,R,N4,N8,R,N8,R,N4,R,N8N16,N16,N8,N8,N8,R,N8,R,N4,N8,R,N8,N8N16,N16,N2};  // '비행기' 박자
+
+int song_2[]={SOL,REST,SOL,RA,REST,RA,SOL,REST,SOL,MI,SOL,REST,SOL,MI,REST,MI,RE,SOL,REST,SOL,RA,REST,RA,SOL,REST,SOL,MI,SOL,MI,RE,MI,DO,EOS};  // '학교종' 음계
+int time_2[]={N4,R,N4,N4,R,N4,N4,R,N4,N2,N4,R,N4,N4,R,N4,N2N4,N4,R,N4,N4,R,N4,N4,R,N4,N2,N4,N4,N4,N4,N2N4};  // '학교종' 박자
+
+int song_3[]={DO,MI,SOL,DO,MI,SOL,RA,REST,RA,REST,RA,SOL,FA,REST,FA,REST,FA,MI,REST,MI,REST,MI,RE,REST,RE,REST,RE,DO,REST,EOS};  // '무엇이 똑같을까' 음계
+int time_3[]={N4,N4,N4,N4,N4,N4,N4,R,N4,R,N4,N2N4,N4,R,N4,R,N4,N4,R,N4,R,N4,N4,R,N4,R,N4,N2N4,R};  // '무엇이 똑같을까' 박자
+
+
+ISR(TIMER0_OVF_vect)               // Timer/Counter() 오버플로우 인터럽트 서비스 루틴
+{
+	TCNT0 = f_table[tone];          // TCNT0 초기화
+	if (state == OFF)
+	{
+		PORTB |= 1<<4;               // 버저 포트 ON
+		state = ON;
+	}
+	else
+	{
+		PORTB &= ~(1<<4);            // 버저 포트 OFF
+		state = OFF;
+	}
+}
+
+ISR(INT4_vect){                          // SW1을 누르면 새로운 노래로 바뀜 (노래1->노래2->노래3->노래1 순)
+   _delay_ms(100);                       // 스위치 바운싱 체크를 위해 100ms 기다림
+   EIFR = 1 <<4;
+   
+   if((PINE&0x10)==0x10)
+   return;
+   
+   if(cur_song == SONG1){                 // 현재 노래가 SONG1인 경우
+      cur_song = SONG2;                   // SONG2로 변경
+   }
+   else if(cur_song == SONG2){            // 현재 노래가 SONG2인 경우
+      cur_song = SONG3;                   // SONG3로 변경
+   }
+   else if(cur_song == SONG3){            // 현재 노래가 SONG3인 경우
+      cur_song = SONG1;                   // SONG1로 변경
+   }
+}
+
+void init_sing(void);
+
+int main(){
+	
+	init_sing();                        // 함수로 기본 포트 설정을 함
+	
+	while (1)
+	{
+		int i;
+		
+		if (cur_song == SONG1){
+			i=0;                           // 노래 반복 초기화
+			do{
+				tone = song_1[i];          // '비행기' 현재 음계
+				_delay_ms(time_1[i++]);    // 한 계명당 지속 시간
+				if (cur_song != SONG1)     
+					break;
+			}while(song_1[i] != EOS && cur_song == SONG1);         // 노래 마지막 음인지 검사	
+		}
+		else if(cur_song == SONG2){
+			i=0;                           // 노래 반복 초기화
+			do{
+				tone = song_2[i];          // '학교종' 현재 음계
+				_delay_ms(time_2[i++]);    // 한 계명당 지속 시간
+				if (cur_song != SONG2)
+				break;
+			}while(song_2[i] != EOS && cur_song == SONG2);         // 노래 마지막 음인지 검사
+		}
+		else if(cur_song == SONG3){
+			i=0;                           // 노래 반복 초기화
+			do{
+				tone = song_3[i];          // '무엇이 똑같을까' 현재 음계
+				_delay_ms(time_3[i++]);    // 한 계명당 지속 시간
+				if (cur_song != SONG3)
+				break;
+			}while(song_3[i] != EOS && cur_song == SONG3);         // 노래 마지막 음인지 검사
+		}
+	}
+}
+
+void init_sing(void)
+{
+	int j=0;
+
+	TCNT0 = f_table[song_1[j]];   // TCNT0 초기화
+
+	DDRB |= 0x10;               // 버저 연결 포트 PB4 출력 설정
+	TCCR0 = 0x03;               // 프리스케일러 32분주
+	TIMSK = 0x01;               // 오버플로우 인터럽트 활성화, TOIE0 비트 세트
+	sei();                      // 전역인터럽트 활성화
+	
+	EICRB=0x02;                 // INT4 트리거는 하강 에지
+	EIMSK=0x10;                 // INT4 인터럽트 enable
+}

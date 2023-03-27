@@ -1,0 +1,193 @@
+/*
+ * Lab9_2.c
+ * 문제2. 거리센서와 CLCD, 스위치를 이용하여 아래와 같이 동작하는 '거리측정장치'를 제작한다.
+ - 평상시에는 0.1초마다 한 번씩 현재 거리센서가 가리키고 있는 방향으로 물체까지의 거리를 측정하고 그 값을 
+ CLCD에 디스플레이한다.
+ - 스위치를 한 번 누르면 누른 시점의 거리 측정값을 CLCD에 디스플레이하고 정지한다.
+ */ 
+
+#include <avr/io.h>
+#define F_CPU 16000000UL
+#include <util/delay.h>
+#include <avr/interrupt.h>
+
+#define SOUND_VELOCITY 340UL              // 소리 속도 (m/s)
+
+#define TRIG 6                            // Trigger 신호 출력
+#define ECHO 7                            // Echo 신호 입력
+#define INT4 4                            // 스위치 인터럽트 (bit4, 입력)
+
+// state : STOP or GO
+#define STOP 0
+#define GO 1
+
+#define NULL 0x00
+
+unsigned char state = GO;  // 초기 상태 GO
+
+// CLCD Command & Data
+#define BIT4_LINE2_DOT58 0x28             // 4bit mode, 2 lines, 5*8 Dot
+#define DISPON_CUROFF_BLKOFF 0x0C         // Display on, Cursor off, Blink off
+#define DISPOFF_CUROFF_BLKOFF 0x08        // Display off, Cursor off, Blink off
+#define INC_NOSHIFT 0x06                  // Entry mode, Cursor Increment, Display no shift
+
+#define DISPCLEAR 0x01                    // Display clear, address 0, position, cursor 0
+#define CUR1LINE 0x80                     // cursor position line 1 first
+#define CUR2LINE 0xC0                     // cursor position line 2 first
+#define CURHOME 0x02                      // cursor home
+#define E_BIT 0x04                        // Enable bit #
+#define  RW_BIT 0x03                      // Read Write bit #
+#define  RS_BIT 0x02                      // Register select bit #
+
+volatile int cur_distance = 0;            // '현재 거리' 변수 초기화
+volatile int stop_distance = 0 ;          // 'stop 거리' 변수 초기화
+
+void CLCD_cmd(char);              // 명령어 전송 함수
+void CLCD_data(char);             // 데이터 write 함수
+void CLCD_puts(char *);           // 문자열 처리 함수
+void init_interrupt();            // 인터럽트 초기화 함수
+void init_CLCD();                 // CLCD 초기화 함수
+int read_distance();              // 거리 측정 함수
+
+
+//문자열 정의
+char Distance[]="Distance : ";
+char CLCD_NUM[] = "000.0";
+
+int main(void){
+	DDRE = 0x00;                                    // PORTE를 입력 신호로 줌 (pin4:스위치 sw1)
+	DDRE = ((DDRE | (1<<TRIG))& ~(1<<ECHO));        // 초음파거리센서 TRIG(bit6, 출력), ECHO(bit7, 입력)
+	
+	DDRC = 0xff;               // CLCD PORT(data & command)
+	DDRD = 0xff;               // CLCD PORT(control 출력 : RS=bit2, RW=bit3, E=bit4)
+	
+	init_interrupt();          // 인터럽트 초기화
+	init_CLCD();               // CLCD 초기화
+	while(1)
+	{		
+		_delay_ms(100);                // 0.1초 간격으로 측정
+		cur_distance = read_distance();
+		
+		if(state==GO)  // state가 GO인 경우, 현재 측정 거리 출력
+		{
+			CLCD_cmd(DISPCLEAR);
+			CLCD_cmd(CUR1LINE);
+			CLCD_puts(Distance);            // Display "Distance : " (1열)
+			CLCD_cmd(CUR2LINE);
+			CLCD_num_display(cur_distance);     // 측정한 거리 값 표시 (2열)
+		}
+		else  //state가 STOP인 경우, 스위치 누른 시점의 거리 출력
+		{
+			CLCD_cmd(DISPCLEAR);
+			CLCD_cmd(CUR1LINE);
+			CLCD_puts(Distance);            // Display "Distance : " (1열)
+			CLCD_cmd(CUR2LINE);
+			CLCD_num_display(stop_distance);     // 측정한 거리 값 표시 (2열)
+		}
+	}
+}
+
+void init_interrupt(){
+	EICRB = 0x02;       // INT4 트리거 모드 : falling edge
+	EIMSK = 0x10;       // INT4 인터럽트 활성화
+	SREG |= 0x80;       // SREG의 bit7을 1로 활성화
+}
+
+ISR(INT4_vect){         // sw1을 누르면 누른 시점의 거리 측정값을 CLCD에 디스플레이하고 정지, 다시 누르면 거리 재측정
+	_delay_ms(100);                 // 스위치 바운드 시간 동안 기다림
+	EIFR = 1<<4;                    // 그 사이 스위치 바운스에 의해 생긴 인터럽트 무효화
+	if((PINE & 0x10) != 0x00)       // 스위치가 ON 상태인지 확인
+	return;                         // 아니라면 노이즈 입력으로 여기고 그냥 return;
+	
+	if (state == GO) // state가 GO라면
+	{
+		stop_distance = cur_distance;  // 스위치 누른 시점의 거리 측정값을 stop_distacne에 넣고
+		state = STOP;                  // state를 STOP으로 변경
+	}
+	else if (state == STOP)   // state가 STOP이면
+	{
+		state = GO;  // state를 GO로 변경
+	}
+}
+
+int read_distance(){
+	int distance = 0;
+	TCCR1B = 0x03;                 // Timer/Counter1 클록 4us
+	PORTE &= ~(1<<TRIG);           // Trig = Low
+	_delay_us(10);
+	PORTE |= (1<<TRIG);            // Trig = High
+	_delay_us(10);
+	PORTE &= ~(1<<TRIG);           // Trig = Low
+	while(!(PINE & (1<<ECHO)))     // Echo가 High가 될 때까지 기다림
+	;
+	TCNT1 = 0x0000;                // Timer/Counter1 값 초기화(=0)
+	while(PINE & (1<<ECHO))
+	;
+	TCCR1B = 0x00;                 // Timer/Counter1 클록 정지
+	distance = SOUND_VELOCITY*(TCNT1*4/2)/1000;   // 거리 = 속도*시간, 거리 단위 mm
+	
+	return(distance);
+}
+void init_CLCD(){                    // LCD 초기화
+	_delay_ms(50);                   // 전원 인가후 CLCD 셋업 시간
+	PORTC = 0x00;                    // data clear
+	CLCD_cmd(BIT4_LINE2_DOT58);      // 4bit mode, 2lines, 5*8 dot
+	CLCD_cmd(DISPON_CUROFF_BLKOFF);  // display on, cursor off, blink off
+	CLCD_cmd(INC_NOSHIFT);           // entry mode, cursor increment, display no shift
+	CLCD_cmd(DISPCLEAR);             // display clear, address 0
+	_delay_ms(2);                    // 디스플레이 클리어 실행시간 동안 대기
+}
+void CLCD_cmd(char cmd)
+{
+	PORTD = 0x00;        // 0b00000100, E(bit4)=0, R/W(bit3)=0, RS(bit2)=0, Write 사이클, 데이터 모드
+	
+	_delay_us(1);        // setup time
+	PORTD = 0x10;        // 0b00010100, E(bit4)=1, R/W(bit3)=0, RS(bit2)=0 enable
+	
+	PORTC = cmd & 0xf0;  // 8비트 데이트 중 상위 4비트 준비
+	PORTD = 0x00;        // 0b00000100, E(bit4)=0, R/W(bit3)=0, RS(bit2)=0, Write 사이클, 데이터 모드
+	
+	_delay_us(2);        // hold time & setup time
+	PORTD = 0x10;        // 0b00010100, E(bit4)=1, R/W(bit3)=0, RS(bit2)=0 enable
+	
+	PORTC = (cmd<<4) & 0xf0;  // 8비트 데이터 중 하위 4비트 준비
+	PORTD = 0x00;        // 0b00000100, E(bit4)=0, R/W(bit3)=0, RS(bit2)=0, Write 사이클, 데이터 모드
+	
+	_delay_ms(1);        // hold time & Execution time
+}
+void CLCD_data(char data)
+{
+	PORTD = 0x04;         // 0b00000100, E(bit4)=0, R/W(bit3)=0, RS(bit2)=1, Write 사이클, 데이터 모드
+	
+	_delay_us(1);         // setup time
+	PORTD = 0x14;         // 0b00010100, E(bit4)=1, R/W(bit3)=0, RS(bit2)=1 enable
+	
+	PORTC = data & 0xf0;  // 8비트 데이트 중 상위 4비트 준비
+	PORTD = 0x04;         // 0b00000100, E(bit4)=0, R/W(bit3)=0, RS(bit2)=1, Write 사이클, 데이터 모드
+	
+	_delay_us(2);         // hold time & setup time
+	PORTD = 0x14;         // 0b00010100, E(bit4)=1, R/W(bit3)=0, RS(bit2)=1 enable
+	
+	PORTC = (data<<4) & 0xf0;  // 8비트 데이터 중 하위 4비트 준비
+	PORTD = 0x04;         // 0b00000100, E(bit4)=0, R/W(bit3)=0, RS(bit2)=1, Write 사이클, 데이터 모드
+	
+	_delay_ms(1);         // hold time & Execution time
+}
+void CLCD_puts(char *ptr)
+{
+	while (*ptr != NULL)       // 문자열이 마지막(NULL)인지 검사
+	{
+		CLCD_data(*ptr++);     // 마지막이 아니면 1문자 디스플레이
+	}
+} 
+void CLCD_num_display(int num){
+	CLCD_NUM[0] = (num/1000)%10 + 0x30;
+	CLCD_NUM[1] = (num/100)%10 + 0x30;
+	CLCD_NUM[2] = (num/10)%10 + 0x30;
+	CLCD_NUM[3] = '.';
+	CLCD_NUM[4] = (num/1)%10 + 0x30;
+	CLCD_NUM[5] = NULL;
+	CLCD_puts(CLCD_NUM);
+}
+
+

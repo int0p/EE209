@@ -1,0 +1,161 @@
+/*
+ * MOTOR_3.c
+ * 문제3. 자연풍 선풍기에 스위치 3개 SW1, SW2, SW3를 추가하여, SW1은 기동/정지를 결정하고, 
+  SW2는 약풍/중풍/강풍 기능이 순서대로 동작하도록 하고, SW3은 5초 후에 꺼지는 기능이 동작하는 '선풍기'를 제작한다.
+ */ 
+
+#include <avr/io.h>
+#include <avr/interrupt.h>
+#define F_CPU 16000000UL
+#define __DELAY_BACKWARD_COMPATIBLE__
+
+#include <util/delay.h>
+
+// 모터 제어 (PB7=AIN1, PB6=AIN2, PB5=PWMA, PB4=STBY)
+#define MOTOR_CW 0xb0          // 모터 Forward : AIN1=1, AIN2=0, PWMA=1, STBY=1
+#define MOTOR_BRAKE 0xd0       // 모터 Short Brake : AIN1=1, AIN2=1, PWMA=0, STBY=1
+#define MOTOR_STOP 0x30        // 모터 Stop : AIN1=0, AIN2=0, PWMA=1, STBY=1
+#define MOTOR_STANDBY 0x00     // 모터 Standby : AIN1=0, AIN2=0, PWMA=0, STBY=0
+
+// 모터 상태
+#define GO 0
+#define BREAK 1
+#define STOP 2
+
+#define ON 3                   // SW3 눌러진 상태, 클럭 신호 만들기('1')
+#define OFF 4                  // 클럭 신호 만들기('0')
+
+// Motor Speed
+#define STOP_SPEED 0            // duty cycle 0% 값
+#define LOW_SPEED 77            // duty cycle 30% 값 (=255*0.3)
+#define MID_SPEED 153           // duty cycle 60% 값 (=255*0.6)
+#define HIGH_SPEED 230          // duty cycle 90% 값 (=255*0.9)
+
+// 모더 속도 상수
+#define LowV 1
+#define MidV 2
+#define HighV 3
+
+// speed, state 초기화. 
+volatile int speed = LowV;      // LowV, MidV, HighV
+volatile int state = GO;        // GO,STOP,BREAK
+
+// 타이머 발생 횟수 초기화
+volatile int count = 0;    
+   
+ISR(INT4_vect){                          //sw1을 누르면 정지하고, 다시 누르면 진행
+   _delay_ms(100);
+   EIFR = 1 <<4;
+   
+   if((PINE&0x10)==0x10)
+   return;
+   
+   //toggle state 
+   if (state == GO){
+      state = STOP;
+   }
+   else if (state == STOP){
+      state = GO;
+      //STOP에서 GO가 되면 speed는 기존 상태 유지. 
+   }
+}
+
+
+ISR(INT5_vect){                          //sw2를 누르면 선풍기 속도 변화.
+   _delay_ms(100);
+   EIFR= 1<<5;
+   if((PINE & 0x20)==0x20)
+   return;
+   
+   
+   //speed 약 -> 중 -> 강
+   if (speed == LowV ){
+      speed = MidV;
+   }
+   else if (speed == MidV){
+      speed = HighV;
+   }
+   else if (speed == HighV){
+      speed = LowV;
+   }
+}
+
+ISR(INT6_vect){                          // SW3를 누르면 5초 후에 선풍기가 꺼짐
+	_delay_ms(100);                      // 스위치 바운스 기간동안 기다림
+	EIFR= 1<<6;                          // 그 사이에 바운스에 의하여 생긴 인터럽트는 무효화
+	if((PINE & 0x40)==0x40)              // 인터럽트 입력 핀(PE6)를 다시 검사하여
+	return;                              // 눌러진 상태가 아니라면 ('1') 리턴
+	
+	state = ON;               // SW3이 눌린 상태(ON)로 변경함
+	TIMSK = 0x01;             // 오버플로우 인터럽트 활성화함 (TOIE0 비트 세트)
+}
+
+
+ISR(TIMER0_OVF_vect){              // 타이머/카운터 오버플로우 인터럽트 서비스 루틴
+	TCNT0 = 0x06;                  // TCNT0 초기화 (필요한 클록 사이클 값 = 250, 256-250=6)
+	// ON과 OFF를 반복하여 클록을 만듦
+	if (state == ON){
+		state = OFF;
+	}
+	else{
+		state = ON;
+	}
+
+	count++;                       // 타이머 발생 횟수 1 증가 (64분주의 경우, 4us*250=1000us=1ms)
+	if (count > 5000){             // 타이머 발생 횟수가 5000이상이면 (1ms*5000=5s)
+		state = STOP;              // 정지 상태로 변경
+		TIMSK = 0x00;              // 오버플로우 인터럽트 비활성화하여 SW3이 눌리지 않았을때 동작 안하도록 함
+		count = 0;                 // 타이머 발생 횟수 초기화
+	}	
+}	
+	
+int main(void)
+{
+   
+   DDRB = 0xf0;              // PB7~4 출력 처리
+   DDRA = 0x0f;              // LED 출력
+   PORTB = MOTOR_STANDBY;    // PORTB의 초기상태: STANDBY
+   TCNT0 = 0x06;             // 1ms를 만들기 위한 타이머/카운터 레지스터 설정
+   TCCR0 = 0x04;             // 64분주 프리스케일
+   TCCR2 = 0x6b;
+   
+   // 인터럽트 포트 설정
+   DDRE = 0x00;              // PE 포트를 입력 신호로 사용
+   sei();
+   
+   EICRB=0x2a;               // INT4, INT5, INT6 트리거는 falling edge
+   EIMSK=0x70;               // INT4, INT5, INT6 인터럽트 enable
+   
+      while (1)
+   {
+      //state가 Go일 경우 시계방향으로 돌며, speed의 값에 따라 모더의 속도를 조절함. 
+      if (state == GO){
+         PORTB = MOTOR_CW;
+         if (speed == LowV){
+            PORTA = 0x02;
+            OCR2 = LOW_SPEED;
+            _delay_ms(100);
+         }
+         else if (speed == MidV){
+            PORTA = 0x04;
+            OCR2 = MID_SPEED;
+            _delay_ms(100);
+         }
+         else if (speed == HighV){
+            PORTA = 0x08;
+            OCR2 = HIGH_SPEED;
+            _delay_ms(100);
+         }    
+      }
+      
+      //state가 stop일 경우 동작을 정지함. 
+      else if (state == STOP){
+         PORTB = MOTOR_STOP;
+         PORTA = 0x01;
+         OCR2 = STOP_SPEED;
+         _delay_ms(100);
+      }
+   }
+}
+
+

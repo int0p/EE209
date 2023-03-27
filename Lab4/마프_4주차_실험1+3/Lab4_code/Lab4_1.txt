@@ -1,0 +1,77 @@
+/*
+ * BUZZER_1.c
+ *
+ * 문제1. 자신이 좋아하는 노래가 연주되는 '노래 연주기'를 제작한다.
+ */ 
+
+#include <avr/io.h>
+#include <avr/interrupt.h>
+#define  F_CPU 16000000UL
+#define __DELAY_BACKWARD_COMPATIBLE__
+
+#include <util/delay.h>
+
+//state
+#define ON 0              // 버저 ON
+#define OFF 1             // 버저 OFF
+
+//(낮은)도~(높은)도, 묵음(REST)을 정의
+#define DO 0               
+#define RE 1
+#define MI 2
+#define FA 3
+#define SOL 4
+#define RA 5
+#define SI 6
+#define DDO 7
+#define REST 8
+#define EOS -1            // END Of Song 표시
+
+#define N2 1250           // 2분 음표 연주 시간, 60*1000/96*2(ms)
+#define N4 625            // 4분 음표 연주 시간, 60*1000/96(ms)
+#define N8N16 469         // 점8분 음표 연주 시간, 60*1000/96*2(ms)
+#define N8 313            // 8분 음표 연주 시간, 60*1000/96/2(ms)
+#define N16 156           // 16분 음표 연주 시간, 60*1000/96/4(ms)
+#define R 1               // 묵음 연주 시간, 1(ms)
+
+volatile int state, tone;
+char f_table[]={17,43,66,77,97,114,117,137,255};   // 도레미파솔라시도에 해당하는 TCNT0 값을 미리 계산한 값
+
+int song[]={MI,RE,DO,RE,MI,REST,MI,REST,MI,RE,REST,RE,REST,RE,MI,REST,MI,REST,MI,REST,MI,RE,DO,RE,MI,REST,MI,REST,MI,RE,REST,RE,MI,RE,DO,EOS};  // '비행기' 음계
+int time[]={N8N16,N16,N8,N8,N8,R,N8,R,N4,N8,R,N8,R,N4,N8,R,N8,R,N4,R,N8N16,N16,N8,N8,N8,R,N8,R,N4,N8,R,N8,N8N16,N16,N2};  // '비행기' 박자
+
+ISR(TIMER0_OVF_vect)               // Timer/Counter() 오버플로우 인터럽트 서비스 루틴
+{
+   TCNT0 = f_table[tone];          // TCNT0 초기화 
+   if (state == OFF)
+   {
+      PORTB |= 1<<4;               // 버저 포트 ON
+      state = ON;
+   }
+   else
+   {
+      PORTB &= ~(1<<4);            // 버저 포트 OFF
+      state = OFF;
+   }
+}
+
+int main(void)
+{
+   int i=0;                  
+
+   DDRB |= 0x10;               // 버저 연결 포트 PB4 출력 설정
+   TCCR0 = 0x03;               // 프리스케일러 32분주
+   TIMSK = 0x01;               // 오버플로우 인터럽트 활성화, TOIE0 비트 세트
+   TCNT0 = f_table[song[i]];   // TCNT0 초기화
+   sei();                      // 전역인터럽트 활성화
+   
+    while (1) 
+    {
+      i=0;                         // 노래 반복 초기화
+      do{
+         tone = song[i];          // 현재 음계
+         _delay_ms(time[i++]);    // 한 계명당 지속 시간
+      }while(song[i] != EOS);         // 노래 마지막 음인지 검사
+    }
+}
+

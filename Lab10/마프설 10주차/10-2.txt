@@ -1,0 +1,173 @@
+/*온도센서로 디지털 온도계 만들기. 
+- 디지털 온도센서를 이용하여 주변의 온도를 측정하고 이를 -55.0~99.5'c까지 0.5'c 해상도로 4-digit FND에 디스플레이한다. 
+- TWI 통신을 이용하여 LM75A의 온도값을 읽어온 후 이를 해석하여 FND에 소수 첫째자리까지 디스플레이. 
+! 온도가 섭씨 30'c 이상이거나 20'c 미만이면 알람 버저를 계속 울린다. 
+*/
+#define F_CPU 16000000UL
+#define F_SCK 40000UL
+#include <avr/io.h>
+
+#define LM75A_ADDR 0x98 //A2A1A0=100인 경우 원래 7bit를 1bit left shift한 값. 
+#define LM75A_TEMP_REG 0 //pointer register를 temp로. 
+#include <util/delay.h>
+#include <avr/interrupt.h>
+
+void init_twi_port();
+int read_twi_2byte_nopreset(char reg);
+void display_FND(int value);
+
+//buzzer 상태 설정
+#define ON 1
+#define OFF 0
+volatile int buzz_state = OFF;
+
+//buzzer 내부 상태 설정
+#define ION 1
+#define IOFF 0
+volatile int buzz_inner_state = IOFF;
+
+ISR(TIMER0_OVF_vect){
+	TCNT0 = 17;
+	
+	if(buzz_state == ON){
+		if(buzz_inner_state == ION){
+			PORTB |= 1<<4;
+			buzz_inner_state = IOFF;
+		}
+		else{
+			PORTB &= ~(1<<4);
+			buzz_inner_state = ION;
+		}
+	}
+}
+int main(void){
+	int i, temperature;
+	init_twi_port(); // twi 및 포트 초기화
+	DDRB |= 0x10;
+	DDRA = 0xff;
+	
+	TCCR0 = 0X03; //32분주
+	TCNT0 = 17;
+	SREG |= 0X80;
+	TIMSK = 0X01; //TIMER 인터럽트 활성화
+	
+	while(1){
+		
+		for (i = 0;i<30;i++){
+			
+			if(i==0){ 
+				//억세스 시간(300ms) 기다리기 위하여 30번에 1번만 실제로 억세스함. 
+				temperature = read_twi_2byte_nopreset(LM75A_TEMP_REG);
+				if (temperature>=0b0001011100000000 || temperature<=0){ 
+					//온도가 23'c이상이거나 0'c이하면 buzzer울림
+					buzz_state = ON;
+				}
+			}
+		
+			if(buzz_state == ON){
+				PORTA = 0x10;
+			}else{
+				PORTA = 0x20;
+				PORTB &= ~(1<<4); //buzz off
+			}
+			display_FND(temperature); //한번 display하는데 10ms 소요.
+		}//for
+		
+		PORTA = 0x00;
+		buzz_state = OFF;
+	}
+}
+
+
+void init_twi_port(){
+	DDRC = 0xff;
+	DDRG = 0xff;
+	TWSR = TWSR & 0xfc; //prescaler = 00 (1배)
+	TWBR = (F_CPU/F_SCK - 16)/2; //bit rate 설정
+}
+
+int read_twi_2byte_nopreset(char reg){
+	char high_byte, low_byte;
+	/////////////////W
+	//START 전송
+	TWCR = (1<<TWINT)|(1<<TWSTA)|(1<<TWEN);
+	
+	//상태체크
+	while (((TWCR & (1<<TWINT))==0X00) || (TWSR&0Xf8) != 0X08);
+	
+	//SLA + W
+	TWDR = LM75A_ADDR |0; //TWDR에 SLA + W set
+	TWCR = (1<<TWINT) | (1<<TWEN); //SLA + W 전송
+	
+	//ACK 체크
+	while (((TWCR & (1<<TWINT))==0X00) || (TWSR&0Xf8) != 0X18);
+	
+	//TWDR에 데이터값 set
+	TWDR = reg;
+	
+	//데이터 전송
+	TWCR = (1<<TWINT) | (1<<TWEN);
+	
+	//ACK 체크
+	while (((TWCR & (1<<TWINT))==0X00) || (TWSR&0Xf8) != 0X28);
+	
+	/////////////////R
+	//RESTART 전송
+	TWCR = (1<<TWINT)|(1<<TWSTA)|(1<<TWEN);
+	
+	//상태체크
+	while (((TWCR & (1<<TWINT))==0X00) || (TWSR&0Xf8) != 0X10);
+	
+	//SLA+R
+	TWDR = LM75A_ADDR |1; //read
+	TWCR = (1<<TWINT) | (1<<TWEN); //SLA + R 전송
+	
+	//ACK체크
+	while (((TWCR & (1<<TWINT))==0X00) || (TWSR&0Xf8) != 0X40);
+	
+	//데이터 수신
+	TWCR = (1<<TWINT)|(1<<TWEN|1<<TWEA); //1st data 준비(마지막 데이터가 아님)
+	while (((TWCR & (1<<TWINT))==0X00) || (TWSR&0Xf8) != 0X50); //상태체크
+	high_byte = TWDR; //상위8bit저장
+	
+	TWCR = (1<<TWINT) | (1<<TWEN); //2nd DATA 준비(마지막 데이터)
+	while (((TWCR & (1<<TWINT))==0X00) || (TWSR&0Xf8) != 0X58);//상태체크
+	low_byte = TWDR;
+	
+	//STOP 체크
+	TWCR = (1<<TWINT)|(1<<TWSTO)|(1<<TWEN); //전송
+	while((TWCR &(1<<TWSTO)));//확인
+	
+	return((high_byte<<8)|low_byte); //수신 DATA return.
+}
+
+void display_FND(int value){
+	char digit[12] = {0x3f, 0x06, 0x5b, 0x4f, 0x66, 0x6d, 0x7c, 0x07, 0x7f, 0x67, 0x00, 0x40}; 
+		//[10]=0x00, [11]=0x40(-부호)
+	char fnd_sel[4] = {0x01,0x02,0x04,0x08};
+	int value_int, value_deci, num[4], i;
+	
+	//sign검사
+	if((value & 0x8000)!=0x8000){
+		num[3] = 10;//양수일 경우 아무것도 표시 안 함. 
+	}
+	else{//음수일 경우 -부호 표시 후 2의 보수 취함. 
+		num[3] = 11;
+		value = (~value)+1;
+	}
+	
+	value_int = (value & 0x7f00) >> 8; //정수값: High byte bit 6~0 
+	value_deci = (value & 0x0080); //소수 첫째자리 값: Low byte bit7
+	num[2] = (value_int/10) % 10;
+	num[1] = value_int % 10;
+	num[0] = (value_deci == 0x80) ? 7:0; 
+	//소수 첫째자리가 1이면 0.5에 해당하므로 5를 표시함. (fnd고장 -> 5가운데 안 떠서 7로 변경)
+	
+	for (i = 0;i<4; i++){
+		PORTC = digit[num[i]];
+		PORTG = fnd_sel[i];
+		if(i==1) PORTC |= 0x80; //왼쪽에서 3번째 FND에는 소수점(.)찍음. 
+		if(i%2) _delay_ms(2);
+		else _delay_ms(3);
+	}
+}

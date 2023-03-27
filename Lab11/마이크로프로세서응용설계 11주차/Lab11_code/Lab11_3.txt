@@ -1,0 +1,100 @@
+#include <avr/io.h>
+#define F_CPU 16000000UL
+#include <util/delay.h>
+#include <avr/interrupt.h>
+
+#define NULL 0
+
+void init_uart0()             // UART0 초기화 함수
+{
+	UCSR0B = 0x18;            // 송신 transmit(TX) enable, 수신 recevie(RX) enable
+	UCSR0C = 0x06;            // UART mode : asynchronous operation(비동기), no parity, 1 stop bit, 8bit data
+	UBRR0H = 0;               // baudrate 세팅
+	UBRR0L = 8;               // 16MHz, 11500 baud
+}
+void putchar0(char c)         // 1 문자를 송신(transmit)하는 함수
+{
+	while(!(UCSR0A & (1<<UDRE0)));    // UCSR0A 5번 비트 = UDRE(UDR Empty), UDRE0는 define된 값이 5이므로 5번 비트 검사
+	UDR0 = c;                         // 1 문자 송신
+}
+
+void puts0(char *ptr)        // string을 송신하는 함수
+{
+	while (1)
+	{
+		if (*ptr != NULL)    // string 끝이 아니면 1문자씩 송신
+		{
+			putchar0(*ptr++);
+		}
+		else
+		return;          // string 끝이면 종료
+	}
+}
+
+char getchar0()               // 1 문자를 수신(receive)하는 함수
+{
+	while (!(UCSR0A & (1<<RXC0)));    // UCSR0A 7번 비트 = RXC(Receiver Complete), 1을 7번 왼쪽으로 shift한 값으로 0x80과 &한 효과가 있음
+	return(UDR0);                     // 1 문자 수신, UDR0에서 수신 데이터를 가져옴
+}
+char available0(){   // 문자 입력 확인 함수
+	if (UCSR0A & (1<<RXC0))
+	return(1);
+	else return(0);
+}
+
+//////////////////////////////////////
+//UART0와 동일한 방법으로 UART1로 setting
+void putchar1(char c)
+{
+	while(!(UCSR1A & (1<<UDRE1)))
+	;
+	UDR1 = c;
+}
+char available1()
+{
+	if(UCSR1A &(1<<RXC1))
+	return(1);
+	else return(0);
+}
+char getchar1()
+{
+	return(UDR1);
+}
+char puts1(char *ptr)
+{
+	while(*ptr != NULL)
+	putchar1(*ptr++);
+}
+void init_uart1()
+{
+	UCSR1B = 0x18;
+	UCSR1C = 0x06;
+	UBRR1H = 0;
+	UBRR1L = 8;
+}
+
+int main()
+{
+	
+	DDRA = 0xff;
+	init_uart1();
+	init_uart0(); // uart0 초기화
+	
+	while(1)
+	{
+		char value; // 입력받은 문자 저장 변수 지정
+		
+		if (available1()){ //폰으로부터 입력받을경우.
+			PORTA = 0x03;
+			value = getchar1();
+			putchar0(value);//PC에 입력받은 값을 출력한다.
+		}
+		
+		else if (available0()){ //PC로부터 입력받을경우
+			PORTA = 0x01;
+			value = getchar0();
+			putchar1(value);//폰에 입력받은값을 출력한다.
+			if (value == '\n') putchar1('\n');	
+		}		
+	}
+}

@@ -1,0 +1,46 @@
+/*
+ * 1주차 2번째 실험
+ *
+ * 문제2. LED를 가장 오른쪽 1개만 켜고 이를 1초마다 한 칸씩 왼쪽으로 이동시키고
+ 왼쪽 끝에 도달하면 다시 오른쪽으로 한 칸씩 이동시키는 '경계 검출기(Boundary detector)'를 제작한다.
+ */ 
+
+#include <avr/io.h>
+
+/* input으로 받은 sec만큼 delay
+input : sec
+output : void
+*/
+void delay_sec(int sec){
+	volatile int i, j, k;
+	for(k=0;k<sec;k++)
+		for(i=0;i<1000;i++)
+			for(j=0;j<900;j++)
+				;
+}
+
+int main(void)
+{
+	DDRA = 0xff;
+	unsigned char i;    //1byte 변수, for문 반복횟수
+	
+	while (1)
+	{
+		//LED의 가장 오른쪽 1개부터 1초마다 한 칸씩 왼쪽으로 이동시키며 ON
+		for(i=0x80; i>0x01; i=i/2)
+		{
+			PORTA = i;
+			delay_sec(1);
+			
+		}
+		
+		//LED가 왼쪽 끝에 도달하면 다시 오른쪽으로 한 칸씩 이동하며 ON
+		for(i=0x01; i<0x80; i=i*2)
+		{
+			PORTA = i;
+			delay_sec(1);
+			
+		}
+	}
+}
+
